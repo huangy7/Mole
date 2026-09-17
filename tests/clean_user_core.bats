@@ -2528,6 +2528,100 @@ EOF
     }
 }
 
+@test "large files skip a timed-out Mail size check and keep later rows (#1576)" {
+    local review_home="$HOME/large-review-mail-timeout"
+    mkdir -p \
+        "$review_home/Library/Mail" \
+        "$review_home/Library/Developer/Xcode/DerivedData"
+
+    run env HOME="$review_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/user.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+note_activity() { :; }
+docker() { return 1; }
+defaults() { return 1; }
+du() { printf '2097152 %s\n' "${2:-/tmp}"; }
+# Cover both the current get_path_size_kb Mail rows and the review-dir
+# helper that sizes through run_with_timeout + du.
+get_path_size_kb() {
+    [[ "$1" == "$HOME/Library/Mail" ]] && return 124
+    printf '2097152\n'
+}
+run_with_timeout() {
+    shift
+    [[ "${!#}" == "$HOME/Library/Mail" ]] && return 124
+    "$@"
+}
+check_large_file_candidates
+echo AFTER_LARGE_FILES
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+    [[ "$output" == *"AFTER_LARGE_FILES"* ]] || {
+        echo "$output"
+        return 1
+    }
+    [[ "$output" != *"Mail data"* ]] || {
+        echo "$output"
+        return 1
+    }
+    [[ "$output" == *"Xcode DerivedData"* ]] || {
+        echo "$output"
+        return 1
+    }
+}
+
+@test "large files still cancel when Mail sizing is interrupted (#1576)" {
+    local review_home="$HOME/large-review-mail-signal"
+    mkdir -p \
+        "$review_home/Library/Mail" \
+        "$review_home/Library/Developer/Xcode/DerivedData"
+
+    run env HOME="$review_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -uo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/user.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+note_activity() { :; }
+docker() { return 1; }
+defaults() { return 1; }
+du() { printf '2097152 %s\n' "${2:-/tmp}"; }
+get_path_size_kb() {
+    [[ "$1" == "$HOME/Library/Mail" ]] && return 130
+    printf '2097152\n'
+}
+run_with_timeout() {
+    shift
+    [[ "${!#}" == "$HOME/Library/Mail" ]] && return 130
+    "$@"
+}
+MOLE_CURRENT_COMMAND=clean
+MOLE_CLEAN_CANCEL_STATUS=0
+check_large_file_candidates
+echo AFTER_LARGE_FILES
+EOF
+
+    [ "$status" -eq 130 ] || {
+        echo "status=$status $output"
+        return 1
+    }
+    [[ "$output" != *"AFTER_LARGE_FILES"* ]] || {
+        echo "$output"
+        return 1
+    }
+    [[ "$output" != *"Xcode DerivedData"* ]] || {
+        echo "$output"
+        return 1
+    }
+}
+
 @test "external volume cleanup discards a partial metadata scan before deletion" {
     local test_home="$HOME/external-partial-scan"
     local volume="$test_home/External"
